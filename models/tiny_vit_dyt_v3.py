@@ -405,8 +405,8 @@ class TinyViTBlock(nn.Module):
         return x
 
     def extra_repr(self) -> str:
-        return f\"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, \" \\
-               f\"window_size={self.window_size}, mlp_ratio={self.mlp_ratio}\"
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
+               f"window_size={self.window_size}, mlp_ratio={self.mlp_ratio}"
 
 
 class BasicLayer(nn.Module):
