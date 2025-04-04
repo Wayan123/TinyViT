@@ -44,10 +44,8 @@ class DynamicTanh(nn.Module):
         # x: (B, N, C) atau (B, C, H, W) tergantung channels_last
         x = torch.tanh(self.alpha * x)
         if self.channels_last:
-            # misal channels_last = True => (B, H, W, C)
             x = x * self.weight + self.bias
         else:
-            # (B, C, ...) => universal style
             shape = (1, -1, 1, 1) if x.dim() == 4 else (1, -1)
             x = x * self.weight.view(*shape) + self.bias.view(*shape)
         return x
@@ -245,8 +243,9 @@ class Mlp(nn.Module):
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
 
-        # alpha_init_value => di-*pass* oleh TinyViT constructor
-        self.norm = DynamicTanh(in_features, channels_last=False, alpha_init_value=alpha_init_value)
+        self.norm = DynamicTanh(
+            in_features, channels_last=False, alpha_init_value=alpha_init_value
+        )
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.act = act_layer()
@@ -278,7 +277,6 @@ class Attention(nn.Module):
         self.attn_ratio = attn_ratio
         h = self.dh + nh_kd * 2
 
-        # Ganti nn.LayerNorm => DynamicTanh
         self.norm = DynamicTanh(dim, channels_last=False, alpha_init_value=alpha_init_value)
         self.qkv = nn.Linear(dim, h)
         self.proj = nn.Linear(self.dh, dim)
@@ -352,12 +350,19 @@ class TinyViTBlock(nn.Module):
         head_dim = dim // num_heads
 
         window_resolution = (window_size, window_size)
-        self.attn = Attention(dim, head_dim, num_heads, attn_ratio=1, resolution=window_resolution,
-                              alpha_init_value=alpha_init_value)
+        self.attn = Attention(
+            dim, head_dim, num_heads, attn_ratio=1, resolution=window_resolution,
+            alpha_init_value=alpha_init_value
+        )
 
         mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
-                       act_layer=activation, drop=drop, alpha_init_value=alpha_init_value)
+        self.mlp = Mlp(
+            in_features=dim,
+            hidden_features=mlp_hidden_dim,
+            act_layer=activation,
+            drop=drop,
+            alpha_init_value=alpha_init_value
+        )
 
         pad = local_conv_size // 2
         self.local_conv = Conv2d_BN(dim, dim, ks=local_conv_size, stride=1, pad=pad, groups=dim)
@@ -374,7 +379,7 @@ class TinyViTBlock(nn.Module):
             x_reshape = x.view(B, H, W, C)
             pad_b = (self.window_size - (H % self.window_size)) % self.window_size
             pad_r = (self.window_size - (W % self.window_size)) % self.window_size
-            padding = (pad_b > 0) or (pad_r > 0)
+            padding = (pad_b > 0 or pad_r > 0)
 
             if padding:
                 x_reshape = F.pad(x_reshape, (0, 0, 0, pad_r, 0, pad_b))
@@ -384,10 +389,16 @@ class TinyViTBlock(nn.Module):
             nH = pH // self.window_size
             nW = pW // self.window_size
 
-            x_reshape = x_reshape.view(B, nH, self.window_size, nW, self.window_size, C)
-            x_reshape = x_reshape.transpose(2, 3).reshape(B * nH * nW, self.window_size * self.window_size, C)
+            x_reshape = x_reshape.view(
+                B, nH, self.window_size, nW, self.window_size, C
+            )
+            x_reshape = x_reshape.transpose(2, 3).reshape(
+                B * nH * nW, self.window_size * self.window_size, C
+            )
             x_reshape = self.attn(x_reshape)
-            x_reshape = x_reshape.view(B, nH, nW, self.window_size, self.window_size, C)
+            x_reshape = x_reshape.view(
+                B, nH, nW, self.window_size, self.window_size, C
+            )
             x_reshape = x_reshape.transpose(2, 3).reshape(B, pH, pW, C)
 
             if padding:
@@ -396,7 +407,6 @@ class TinyViTBlock(nn.Module):
             x = x_reshape.view(B, L, C)
 
         x = res_x + self.drop_path(x)
-
         # local conv
         x = x.transpose(1, 2).reshape(B, C, H, W)
         x = self.local_conv(x)
@@ -424,14 +434,15 @@ class BasicLayer(nn.Module):
                  local_conv_size=3,
                  activation=nn.GELU,
                  out_dim=None,
-                 alpha_init_value=0.5):
+                 alpha_init_value=0.5  # tambah di sini
+                 ):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
 
-        # Meneruskan alpha_init_value ke setiap TinyViTBlock
+        # Meneruskan alpha_init_value ke block
         self.blocks = nn.ModuleList([
             TinyViTBlock(
                 dim=dim,
@@ -463,26 +474,28 @@ class BasicLayer(nn.Module):
         return x
 
     def extra_repr(self) -> str:
-        return (
-            f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
-        )
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
 
 
 class TinyViT(nn.Module):
-    def __init__(self, img_size=224, in_chans=3, num_classes=1000,
-                 embed_dims=[96, 192, 384, 768],
-                 depths=[2, 2, 6, 2],
-                 num_heads=[3, 6, 12, 24],
-                 window_sizes=[7, 7, 14, 7],
-                 mlp_ratio=4.,
-                 drop_rate=0.,
-                 drop_path_rate=0.1,
-                 use_checkpoint=False,
-                 mbconv_expand_ratio=4.0,
-                 local_conv_size=3,
-                 layer_lr_decay=1.0,
-                 alpha_init_value=0.5  # <-- param tambahan agar tak error
-                 ):
+    def __init__(
+            self, 
+            img_size=224,
+            in_chans=3,
+            num_classes=1000,
+            embed_dims=[96, 192, 384, 768],
+            depths=[2, 2, 6, 2],
+            num_heads=[3, 6, 12, 24],
+            window_sizes=[7, 7, 14, 7],
+            mlp_ratio=4.,
+            drop_rate=0.,
+            drop_path_rate=0.1,
+            use_checkpoint=False,
+            mbconv_expand_ratio=4.0,
+            local_conv_size=3,
+            layer_lr_decay=1.0,
+            alpha_init_value=0.5  # param baru, default 0.5
+        ):
         super().__init__()
 
         self.num_classes = num_classes
@@ -510,20 +523,20 @@ class TinyViT(nn.Module):
             kwargs = dict(
                 dim=embed_dims[i_layer],
                 input_resolution=(
-                    patches_resolution[0] // (2 ** i_layer),
-                    patches_resolution[1] // (2 ** i_layer)
+                    patches_resolution[0] // (2**i_layer),
+                    patches_resolution[1] // (2**i_layer)
                 ),
                 depth=depths[i_layer],
-                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer+1])],
                 downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                 use_checkpoint=use_checkpoint,
-                out_dim=embed_dims[min(i_layer + 1, len(embed_dims) - 1)],
+                out_dim=embed_dims[min(i_layer+1, len(embed_dims)-1)],
                 activation=activation,
-                alpha_init_value=alpha_init_value  # kita teruskan ke BasicLayer
+                alpha_init_value=alpha_init_value  # pass to BasicLayer
             )
             if i_layer == 0:
                 layer = ConvLayer(
-                    conv_expand_ratio=mbconv_expand_ratio, 
+                    conv_expand_ratio=mbconv_expand_ratio,
                     **kwargs
                 )
             else:
@@ -537,8 +550,11 @@ class TinyViT(nn.Module):
                 )
             self.layers.append(layer)
 
-        # Ganti LN => DyT (norm_head)
-        self.norm_head = DynamicTanh(embed_dims[-1], channels_last=False, alpha_init_value=alpha_init_value)
+        # norm_head pakai DyT 
+        self.norm_head = DynamicTanh(
+            embed_dims[-1], channels_last=False,
+            alpha_init_value=alpha_init_value
+        )
         self.head = nn.Linear(embed_dims[-1], num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
@@ -556,19 +572,18 @@ class TinyViT(nn.Module):
         self.patch_embed.apply(lambda x: _set_lr_scale(x, lr_scales[0]))
         i = 0
         for layer in self.layers:
-            # layer.blocks => [TinyViTBlock..]
+            # layer = BasicLayer or ConvLayer
             if hasattr(layer, 'blocks'):
                 for block in layer.blocks:
                     block.apply(lambda x: _set_lr_scale(x, lr_scales[i]))
                 i += 1
             else:
-                # convlayer
+                # conv layer's depth
                 layer.apply(lambda x: _set_lr_scale(x, lr_scales[i]))
                 i += layer.depth
-
             if layer.downsample is not None:
                 layer.downsample.apply(lambda x: _set_lr_scale(x, lr_scales[i - 1]))
-        assert i == depth
+        assert i == depth, f"i={i}, depth={depth}"
         for m in [self.norm_head, self.head]:
             m.apply(lambda x: _set_lr_scale(x, lr_scales[-1]))
 
@@ -595,14 +610,14 @@ class TinyViT(nn.Module):
         return {'attention_biases'}
 
     def forward_features(self, x):
-        # x shape: (N, C, H, W)
+        # x: (N, C, H, W)
         x = self.patch_embed(x)
         x = self.layers[0](x)
         start_i = 1
         for i in range(start_i, len(self.layers)):
             layer = self.layers[i]
             x = layer(x)
-        x = x.mean(1)
+        x = x.mean(dim=1)
         return x
 
     def forward(self, x):
@@ -640,7 +655,10 @@ def _create_tiny_vit(variant, pretrained=False, **kwargs):
     def _pretrained_filter_fn(state_dict):
         state_dict = state_dict['model']
         # filter out attention_bias_idxs
-        state_dict = {k: v for k, v in state_dict.items() if not k.endswith('attention_bias_idxs')}
+        state_dict = {
+            k: v for k, v in state_dict.items()
+            if not k.endswith('attention_bias_idxs')
+        }
         return state_dict
 
     if timm.__version__ >= "0.6":
