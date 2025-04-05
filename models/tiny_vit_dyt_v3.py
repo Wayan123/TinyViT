@@ -30,7 +30,7 @@ except (ImportError, ModuleNotFoundError):
 # DynamicTanh: Menggantikan LayerNorm
 ################################################################################
 class DynamicTanh(nn.Module):
-    def __init__(self, normalized_shape, channels_last, alpha_init_value=1.0):
+    def __init__(self, normalized_shape, channels_last, alpha_init_value=0.8):
         super().__init__()
         self.normalized_shape = normalized_shape
         self.alpha_init_value = alpha_init_value
