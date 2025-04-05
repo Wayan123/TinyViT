@@ -25,12 +25,13 @@ except (ImportError, ModuleNotFoundError):
     # timm.__version__ < "0.6"
     from timm.models.helpers import build_model_with_cfg
 
+ALPHA_INIT_VALUE = 0.5  # variabel global untuk nilai alpha
 
 ################################################################################
 # DynamicTanh: Menggantikan LayerNorm
 ################################################################################
 class DynamicTanh(nn.Module):
-    def __init__(self, normalized_shape, channels_last, alpha_init_value=0.5):
+    def __init__(self, normalized_shape, channels_last, alpha_init_value=ALPHA_INIT_VALUE):
         super().__init__()
         self.normalized_shape = normalized_shape
         self.alpha_init_value = alpha_init_value
@@ -246,7 +247,7 @@ class Mlp(nn.Module):
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
 
-        self.norm = DynamicTanh(in_features, channels_last=False, alpha_init_value=0.5)
+        self.norm = DynamicTanh(in_features, channels_last=False, alpha_init_value=ALPHA_INIT_VALUE)
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.act = act_layer()
@@ -277,7 +278,7 @@ class Attention(nn.Module):
         self.attn_ratio = attn_ratio
         h = self.dh + nh_kd * 2
 
-        self.norm = DynamicTanh(dim, channels_last=False, alpha_init_value=0.5)
+        self.norm = DynamicTanh(dim, channels_last=False, alpha_init_value=ALPHA_INIT_VALUE)
         self.qkv = nn.Linear(dim, h)
         self.proj = nn.Linear(self.dh, dim)
 
@@ -522,7 +523,7 @@ class TinyViT(nn.Module):
         # Ganti nn.LayerNorm => DynamicTanh
         # channels_last=False
         #################################################################
-        self.norm_head = DynamicTanh(embed_dims[-1], channels_last=False, alpha_init_value=0.5)
+        self.norm_head = DynamicTanh(embed_dims[-1], channels_last=False, alpha_init_value=ALPHA_INIT_VALUE)
         self.head = nn.Linear(embed_dims[-1], num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
